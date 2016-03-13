@@ -1,0 +1,33 @@
+#!/bin/sh
+# helper script for dispatching commands to scripts in ../lib/<prog>/<command>
+set -eu
+
+valid_syntax() {
+    if [ $# -lt 1 ]; then
+        return 0
+    fi
+    case $1 in
+        -*) return 0;;
+    esac
+    return 1
+}
+
+prog=`basename "$0"`
+dir=`dirname "$0"`/../lib/$prog
+if valid_syntax "$@"; then
+    if [ -d "$dir" ] && [ `ls -1 "$dir" | wc -l` -gt 0 ]; then
+        cd "$dir"
+        commands=`find * -type f -executable | tr '
+' " "`
+    else
+        commands="(none available)"
+    fi
+    cat >&2 <<EOF
+usage: $prog <command> [<arg>...]
+    where <command> can be: $commands
+EOF
+    exit 1
+fi
+name=$1
+shift
+PROG=$prog exec "$dir/$name" "$@"

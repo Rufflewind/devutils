@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+PATH=`dirname "$0"`/../devutils:$PATH
+
+# max distinguishable length of macro name in C89 is 31
+macro=`random_identifier G_ 31`
+
+cat <<EOF
+#ifndef $macro
+#define $macro
+/*#include <_>*/
+
+/* code */
+
+#endif
+EOF
