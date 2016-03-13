@@ -232,7 +232,7 @@ def make_rule_header_parse(string):
         raise ValueError("could not parse dependency tool output:\n\n" + string)
     return make_rule_header_lex(m.group(1))
 
-def save_makefile(file, macros_rules, header="", posix=True):
+def save_makefile(file, macros_rules, header="", posix=False):
     '''
     macros_rules: ({Str: Str, ...},
                    [([Str, ...], [Str, ...], [Str, ...]), ...])
@@ -260,16 +260,23 @@ def save_makefile(file, macros_rules, header="", posix=True):
                              "not a str: " + repr(commands))
     with open(file, "wt") as stream:
         stream.write(header)
+        in_block = False
         if posix:
             stream.write(".POSIX:\n")
+            in_block = True
+
+        if in_block:
+            stream.write("\n")
+            in_block = False
 
         for i, (name, value) in enumerate(sorted(macros.items())):
-            if i == 0:
-                stream.write("\n")
+            in_block = True
             stream.write("{0}={1}\n".format(name, value))
 
         for targets, prerequisites, commands in rules:
-            stream.write("\n")
+            if in_block:
+                stream.write("\n")
+            in_block = True
             stream.write(" ".join(targets))
             stream.write(":")
             stream.write("".join(" " + x for x in sorted(prerequisites)))
