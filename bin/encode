@@ -177,13 +177,10 @@ class Base64Encoder(Encoder):
             iterable = pattern_filter(iterable, "\S+")
             iterable = map_confusables(iterable)
             if self.url_safe:
-                iterable = (s.replace(".", "-")
-                             .replace("+", "-")
-                             .replace("/", "_") for s in iterable)
+                translation_table = maketrans(".+/", "--_")
             else:
-                iterable = (s.replace(".", "+")
-                             .replace("-", "+")
-                             .replace("_", "/") for s in iterable)
+                translation_table = maketrans(".-_", "++/")
+            iterable = (s.translate(translation_table) for s in iterable)
         iterable = str_to_bytes(iterable)
         iterable = to_blocks(iterable, 4, padding=padding)
         iterable = map(decode, iterable)
@@ -278,11 +275,8 @@ def map_confusables(iterable, numeric_substitutions=False):
     iterable = (unicodedata.normalize("NFKD", s)
                 .encode("ascii", "ignore").decode("ascii") for s in iterable)
     if numeric_substitutions:
-        iterable = (s.replace("O", "0") for s in iterable)
-        iterable = (s.replace("o", "0") for s in iterable)
-        iterable = (s.replace("l", "1") for s in iterable)
-        iterable = (s.replace("I", "1") for s in iterable)
-        iterable = (s.replace("|", "1") for s in iterable)
+        translation_table = maketrans("OolI|", "00111")
+        iterable = (s.translate(translation_table) for s in iterable)
     return iterable
 
 def bytes_to_str(iterable):
@@ -399,10 +393,16 @@ ENCODINGS = (
 
 # Python 2 compatibility
 try:
-    stdin  = sys.stdin.buffer
+    maketrans = str.maketrans
+except AttributeError:
+    from string import maketrans
+try:
+    stdin = sys.stdin.buffer
+except AttributeError:
+    stdin = sys.stdin
+try:
     stdout = sys.stdout.buffer
 except AttributeError:
-    stdin  = sys.stdin
     stdout = sys.stdout
 
 # don't let Python handle SIGINT
