@@ -740,12 +740,12 @@ class Library(object):
         return simple_repr(self, "Library")
 
 INFERENCE_RULES = {
-    "c": {".c.o": auto_mkdir([
+    "c": {".c.o": [
         "$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<",
-    ])},
-    "c++": {".cpp.o": auto_mkdir([
+    ]},
+    "c++": {".cpp.o": [
         "$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $<",
-    ])},
+    ]},
 }
 
 DEFAULT_MACROS = {
