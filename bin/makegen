@@ -1,12 +1,23 @@
 #!/bin/sh
-set -eu
 if [ $# -lt 1 ]; then
     if [ -f make.py ]; then
         set make.py
-    else
+    elif [ -f Makefile.py ]; then
         set Makefile.py
+    else
+        set make.hs
     fi
-fi
-libdir=`dirname "$0"`/../lib/`basename "$0"`
-PYTHONPATH=$libdir${PYTHONPATH+:}${PYTHONPATH-} \
-    exec ${PYTHON-python} "$@"
+fi &&
+libdir=`dirname "$0"`/../lib/`basename "$0"` &&
+case $1 in
+    *.py)
+        PYTHONPATH=$libdir${PYTHONPATH+:}${PYTHONPATH-} \
+            exec ${PYTHON-python} "$@";;
+    *.hs)
+        name=`basename "$1"` &&
+        dir=`dirname "$1"` &&
+        exe=${dir}/.#makegen_${name}.tmp &&
+        ghc -F -pgmF "$libdir/pp" -optF "$1" \
+            -o "$exe" "-i$libdir" "$@" &&
+        exec "$exe";;
+esac

@@ -1,0 +1,11 @@
+#!/bin/sh
+exec >"$3"
+if [ "$2" = "$4" ]; then
+    cat <<EOF
+module Main where
+import Prelude ()
+import Makegen.Prelude
+{-# LINE 1 "$1" #-}
+EOF
+fi
+exec cat "$2"
