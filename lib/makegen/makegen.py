@@ -448,7 +448,7 @@ def prettify_rules(rules):
     merged_rules = merge_dicts(*(
         {freeze_value((sorted(prereqs), commands)): frozenset([target])}
         for target, (prereqs, commands) in rules.items()
-    ), merger=merge_sets)
+    ), merger=lambda x, y: (x[0], merge_sets(x[1], y[1])))
     return sorted((tuple(sorted(targets)),) + prereqs_commands
                   for prereqs_commands, targets in merged_rules.items())
 
@@ -670,9 +670,13 @@ def compile_source(filename, language=None, out_filename=None,
     elif out_directory is not None:
         raise ValueError("out_filename and out_directory cannot be both given")
     out_filename = snormpath(out_filename)
+    invisible_rule = False
+    prereqs = frozenset(prereqs)
     if simple_case and out_filename == simple_out_fn:
         commands = []
         inference_rules = INFERENCE_RULES[language]
+        if len(prereqs) == 1:
+            invisible_rule = True
     else:
         commands = auto_mkdir([
             "{0} -c -o $@ {1}".format(
@@ -682,12 +686,13 @@ def compile_source(filename, language=None, out_filename=None,
         ], out_fn=out_filename)
         inference_rules = {}
     return Ruleset(
-        rules={out_filename: (frozenset(prereqs), commands)},
+        rules={out_filename: (prereqs, commands)},
         inference_rules=inference_rules,
         macros=DEFAULT_MACROS[language],
         hint={
             "libraries": tuple(libraries),
             "standard_libraries": frozenset(STANDARD_LIBS[language]),
+            "invisible_rule": invisible_rule,
         },
     )
 
@@ -717,7 +722,9 @@ def build_program(out_filename, objs, libraries=[]):
             )], out_fn=out_filename),
         )},
         macros=merge_dicts(DEFAULT_MACROS[language], macros),
-    ).merge(*objs, hint_merger=do_nothing)
+    ).merge(*(obj for obj in objs
+              if not obj.hint.get("invisible_rule", False)),
+            hint_merger=do_nothing)
 
 class Library(object):
 
