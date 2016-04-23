@@ -1,0 +1,69 @@
+#!/bin/sh
+exec cat <<EOF
+# generic
+.#*
+\#*#
+.nfs????
+dist/
+[tT]humbs.db
+*~
+*.log
+*.tmp
+
+# native
+a.out
+*.a
+*.aps
+*.dll
+*.dylib
+*.exe
+*.gch
+*.ipch
+*.lib
+*.ncb
+*.o
+*.obj
+*.opensdf
+*.pch
+*.so
+*.sdf
+*.stackdump
+*.suo
+*.user
+
+# Fortran
+*.mod
+
+# Haskell
+.cabal-sandbox/
+.stack-work
+cabal.sandbox.config
+*.chi
+*.hcr
+*.hi
+
+# JavaScript
+node_modules/
+
+# Python
+MANIFEST
+__pycache__
+*.pyc
+
+# Rust
+target/
+Cargo.lock
+
+# TeX
+*.aux
+*.bbl
+*.blg
+*.thm
+*.toc
+*Notes.bib
+
+# web
+.sass-cache
+*.css.map
+*.js.map
+EOF

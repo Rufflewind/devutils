@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+if [ $# -ne 1 ]; then
+    cat >&2 <<EOF
+usage: $PROG `basename "$0"` <prefix>
+EOF
+    exit 1
+fi
+prefix=$1
+exec cat <<EOF
+#ifdef ${prefix}_SHARED
+# if defined _WIN32 || defined __CYGWIN__
+#  ifdef ${prefix}_BUILD
+#   define ${prefix}_EXTERN __declspec(dllexport)
+#  else
+#   define ${prefix}_EXTERN __declspec(dllimport)
+#  endif
+# elif __GNUC__ >= 4
+#  define ${prefix}_EXTERN __attribute__ ((visibility ("default")))
+# else
+#  define ${prefix}_EXTERN
+# endif
+#else
+# define ${prefix}_EXTERN
+#endif
+EOF
