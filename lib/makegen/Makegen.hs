@@ -16,19 +16,27 @@ import Data.Sequence (Seq)
 import Data.Set (Set)
 import qualified Data.Map.Strict as Map
 
-data Makefile =
-  Makefile
-  { _rules :: Map String ([String], [String])
-  , _macros :: Map String String
-  }
+-- | Equivalent to @Control.Lens.At.at@ for 'Map'.
+at_Map :: (Functor f, Ord k) =>
+          k -> (Maybe a -> f (Maybe a)) -> Map k a -> f (Map k a)
+at_Map k f m = set <$> f (Map.lookup k m)
+  where
+    set Nothing  = Map.delete k m
+    set (Just x) = Map.insert k x m
 
-unionEqMap :: (Ord k, Eq a) =>
-              Map k a
-           -> Map k a
-           -> Either [(k, a, a)] (Map k a)
-unionEqMap m1 m2
+newtype VarMap
+  = VarMap (Map TypeRep Dynamic)
+  deriving Show
+
+-- | Union two 'Map's.  If the 'Map's contain conflicting elements, the list
+-- of conflicting elements is returned via 'Left'.
+unionEq_Map :: (Ord k, Eq a) =>
+               Map k a
+            -> Map k a
+            -> Either [(k, a, a)] (Map k a)
+unionEq_Map m1 m2
   | null conflicts = Right (m1 <> m2)
-  | otherwise = Left conflicts
+  | otherwise      = Left conflicts
   where
     conflicts = do
       (k, v1) <- Map.toAscList (Map.intersection m1 m2)
@@ -36,12 +44,29 @@ unionEqMap m1 m2
       guard (v1 /= v2)
       pure (k, v1, v2)
 
-data Error
+field :: (Functor f, Eq a, Monoid a, Typeable a) =>
+         (a -> f a) -> VarMap -> f VarMap
+field f (VarMap m) =
+  case undefined of
+    dummy_a ->
+      let set x | x == mempty = Nothing
+                | otherwise   = Just (toDyn (x `asTypeOf` dummy_a))
+          get y = fromMaybe mempty (fromDynamic =<< y)
+          upd y = set <$> f (get y)
+      in VarMap <$> at_Map (typeOf dummy_a) upd m
+
+data Makefile =
+  Makefile
+  { _rules :: Map String ([String], [String])
+  , _macros :: Map String String
+  }
+
+data MakefileError
   = ERuleConflict (String, ([String], [String]), ([String], [String]))
   | EMacroConflict (String, String, String)
   deriving (Eq, Ord, Read, Show)
 
-instance Monoid (Either [Error] Makefile) where
+instance Monoid (Either [MakefileError] Makefile) where
   mempty = Right (Makefile mempty mempty)
   mappend mx my = do
     Makefile x1 x2 <- mx
@@ -50,28 +75,11 @@ instance Monoid (Either [Error] Makefile) where
     z2 <- left (EMacroConflict <$>) (unionEqMap x2 y2)
     pure (Makefile z1 z2)
 
-newtype VarMap
-  = VarMap (Map TypeRep Dynamic)
-  deriving Show
-
 type Make a = Writer (Makefile, VarMap) a
 
 -- | Laws are @isMempty mempty ≡ True@ and if @a ≡ t b@ and @Foldable t@ then
 -- @isMempty ≡ null@.
 class Monoid a => MemptyComparable a where
   isMempty :: a -> Bool
-
-field :: (Functor f, MemptyComparable a, Typeable a) =>
-         (a -> f a) -> VarMap -> f VarMap
-field f m = (`set` m) <$> f (get m)
-  where
-    set x (VarMap m) =
-      VarMap $
-        if isMempty x
-          then Map.delete typeRep m
-          else Map.insert typeRep (toDyn x) m
-      where typeRep = typeOf x
-    get (VarMap m) = x
-      where x = fromMaybe mempty (fromDynamic =<< Map.lookup (typeOf x) m)
 
 data Mk m a = Mk m a
