@@ -650,7 +650,7 @@ def emit_compile_args(language, args):
 
 def compile_source(filename, language=None, out_filename=None,
                    out_directory=None, libraries=[], detect_dependencies=True,
-                   directory=".", suffix=None, **kwargs):
+                   directory=".", suffix=None, extra_deps=[], **kwargs):
     '''Compile a source file into an object file.  The file can be given as a
     `str` or as another `Ruleset` that generates the source file, in which
     case `detect_dependencies` is automatically turned off.'''
@@ -662,11 +662,11 @@ def compile_source(filename, language=None, out_filename=None,
     stem, ext = os.path.splitext(filename)
     language = language or guess_source_code_language(ext)
     args = merge_dicts(DEFAULT_ARGS[language], kwargs)
-    prereqs = []
+    prereqs = [d.default_target for d in extra_deps]
     if detect_dependencies:
         if os.path.isfile(filename):
             try:
-                prereqs = get_dependency_tool(language)(filename)
+                prereqs.extend(get_dependency_tool(language)(filename))
             except Exception as e:
                 logging.warn(e)
         else:
