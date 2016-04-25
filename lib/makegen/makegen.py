@@ -436,12 +436,28 @@ def get_suffixes(inference_rules):
         suffixes.update(re.match(r"(\.[^.]+)(\.[^.]+)$", rule[0]).groups())
     return suffixes
 
-def auto_mkdir(commands, out_fn=None):
-    import re
+def is_path_prefix(subpath, path):
+    import os
+    # a bit of a hack
+    if not subpath:
+        subpath = "."
+    return ".." not in os.path.relpath(subpath, path).split("/")
+
+def auto_mkdir(commands, out_fn=None, dep_fns=None):
+    import re, os
     commands = list(commands)
     if out_fn is not None and not re.search(r"[$/\\]", out_fn):
         return commands
-    return ['@mkdir -p "`dirname $@`"'] + commands
+    out_dir = os.path.dirname(out_fn)
+    if (dep_fns and
+        not any("$" in f for f in dep_fns) and
+        "$" not in out_fn and
+        any(is_path_prefix(out_dir, os.path.dirname(f)) for f in dep_fns)):
+        return commands
+    d = "`dirname $@`"
+    if "$" not in out_fn:
+        d = os.path.dirname(out_fn)
+    return ["@mkdir -p {0}".format(d)] + commands
 
 def prettify_rules(rules):
     # regroup rules that are identical in prerequisites and commands
@@ -610,6 +626,11 @@ def get_clike_language_info(language):
 def emit_compile_args(language, args):
     import itertools
     compiler, flags = get_clike_language_info(language)
+    extra_flags = args["extra_flags"]
+    if not isinstance(extra_flags, str):
+        extra_flags = emit_args(extra_flags)
+    if extra_flags:
+        extra_flags = " " + extra_flags
     return "".join([
         (
             compiler if args["compiler"] is None else
@@ -623,8 +644,8 @@ def emit_compile_args(language, args):
                 ["-std={0}".format(args["standard"])]
             ),
             cpp_macros_to_flags(args["macros"]),
-            args["extra_flags"],
         )),
+        extra_flags,
     ])
 
 def compile_source(filename, language=None, out_filename=None,
@@ -683,7 +704,7 @@ def compile_source(filename, language=None, out_filename=None,
                 compile_args,
                 make_escape(shell_quote(filename)),
             ),
-        ], out_fn=out_filename)
+        ], out_fn=out_filename, dep_fns=prereqs)
         inference_rules = {}
     return Ruleset(
         rules={out_filename: (prereqs, commands)},
@@ -696,7 +717,8 @@ def compile_source(filename, language=None, out_filename=None,
         },
     )
 
-def build_program(out_filename, objs, libraries=[]):
+def build_program(out_filename, objs, libraries=[], extra_flags="",
+                  extra_deps=[]):
     import os
     objs = tuple(objs)
     obj_fns = [obj.default_target for obj in objs]
@@ -707,10 +729,12 @@ def build_program(out_filename, objs, libraries=[]):
         customlibs = ""
     language, libs, macros = get_linker_flags(objs, libraries)
     compiler, flags = get_clike_language_info(language)
+    if extra_flags:
+        extra_flags += " "
     return Ruleset(
         rules={out_filename: (
-            frozenset(obj_fns),
-            auto_mkdir(["{0} {1} -o $@ {2}{3}{4}".format(
+            frozenset(obj_fns + [d.default_target for d in extra_deps]),
+            auto_mkdir(["{0} {1} {5}-o $@ {2}{3}{4}".format(
                 compiler,
                 flags,
                 " ".join(
@@ -719,6 +743,7 @@ def build_program(out_filename, objs, libraries=[]):
                 ),
                 "".join(" -l" + x for x in libs),
                 customlibs,
+                extra_flags,
             )], out_fn=out_filename),
         )},
         macros=merge_dicts(DEFAULT_MACROS[language], macros),
@@ -799,13 +824,15 @@ def separate_dependencies(dependencies):
 
 def simple_command(command, out_filename, dependencies=[],
                    no_clean=False, phony=False):
+    import os
     dep_fns, deps = separate_dependencies(dependencies)
     kwargs = {
         "out": "'$@'",
         "all": " ".join(map(shell_quote, dep_fns)),
         "all1": " ".join(map(shell_quote, dep_fns[1:])),
     }
-    commands = auto_mkdir([command.format(*dep_fns, **kwargs)], out_filename)
+    commands = [command.format(*dep_fns, **kwargs)]
+    commands = auto_mkdir(commands, out_filename, dep_fns=dep_fns)
     return Ruleset(
         rules={out_filename: (frozenset(dep_fns), commands)},
         cleans=frozenset() if no_clean else None,
