@@ -1,13 +1,10 @@
 #!/bin/sh
 set -eu
 exec cat <<EOF
-/*#include <_.h>*/
-/*#include "_.h"*/
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* code */
 
 #ifdef __cplusplus
 }

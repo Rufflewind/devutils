@@ -8,9 +8,7 @@ macro=`random_identifier G_ 31`
 exec cat <<EOF
 #ifndef $macro
 #define $macro
-/*#include <_>*/
 
-/* code */
 
 #endif
 EOF
