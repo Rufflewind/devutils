@@ -1,0 +1,55 @@
+#!/bin/sh
+#
+# `pardbg` is a set of scripts to help attach debuggers to processes spawned
+# by another entity (e.g. by some kind of wrapper script).
+#
+# `pardbg` suspends the process before executing the actual program, and saves
+# its PID as a FIFO in the directory supplied via `-d`.  This PID FIFO can
+# then be consumed by `pardbg-gdb`, which attaches a debugger to the process
+# before resuming it.
+#
+# Example: Debugging an MPI program
+# ---------------------------------
+#
+#  1. First, run the program:
+#
+#         mpiexec -n 4 pardbg -d pids ./a.out
+#
+#     This creates a directory called `pids` containing the PID FIFOs.  For
+#     now, the processes remain suspended.
+#
+#  2. Next, attach the debugger to the process with the lowest PID:
+#
+#         sudo pardbg-gdb pids/*
+#
+#     Now, all the processes will automatically resume and the PID FIFOs will
+#     be removed.
+#
+# No modifications to the program's code are necessary for this work.
+#
+# It is possible to attach a debugger to each process as well.  This would
+# require running `pardbg-gdb pids/$pid` for every `$pid` separately.
+#
+# TODO: Support the case where processes are on different nodes.
+# TODO: Allow sudo to be avoided by spawning `mpiexec` inside `gdb`.
+#
+# Implementation details
+# ----------------------
+#
+# The `pardbg` script is actually thin wrapper over the `pardbg-mkpf` script.
+# It runs the latter script via the `script` command to prevent the program
+# from being killed by a signal.  Its usage syntax is identical to that of
+# `pardbg-mkpf`.  See `pardbg-mkpf` for documentation on the syntax.
+#
+set -eu
+_mkpf=`dirname "$0"`/pardbg-mkpf
+_arg=`basename "$0"`
+set -- --prog-name "$_arg" "$@"
+_args=
+for _arg
+do
+    _patt="s/'/'\\\\''/g"
+    _args=$_args" '"`printf "%s" "$_arg" | sed "$_patt"; printf "'"`
+    shift
+done
+exec script -q -c "$_mkpf$_args" /dev/null

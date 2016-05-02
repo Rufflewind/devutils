@@ -1,0 +1,70 @@
+#!/bin/sh
+set -eu
+
+usage() {
+    cat >&2 <<EOF
+usage: ${_prog-`basename "$0"`} -d <pid-dir> [--] [<command> [<arg>...]]
+
+A wrapper script to help a debugger attach to a running process.
+
+Create a named pipe (FIFO) in <pid-dir> whose name is the ID of the executing
+process.  The execution is then blocked until the FIFO is read, allowing time
+for a debugger to be attached.  Afterwards, the process is replaced by the
+given command, which then shares the same PID.
+
+The <pid-dir> is created if it does not exist.  The script will attempt to
+remove its PID FIFO once it has been read or if the script is terminated.
+EOF
+    exit 1
+}
+
+unset _prog
+_piddir=
+while [ $# -gt 0 ]; do
+    case $1 in
+        --)
+            shift
+            break;;
+        --prog-name)                    # for internal use only
+            shift
+            [ $# -gt 0 ] || {
+                cat >&2 <<EOF
+${_prog-`basename "$0"`}: expected argument after --prog-name
+
+EOF
+                usage
+            }
+            _prog=$1
+            shift;;
+        -d)
+            shift
+            [ $# -gt 0 ] || {
+                cat >&2 <<EOF
+${_prog-`basename "$0"`}: expected argument after -d
+
+EOF
+                usage
+            }
+            _piddir=$1
+            shift;;
+        -*)
+            cat >&2 <<EOF
+${_prog-`basename "$0"`}: unknown argument: $1
+
+EOF
+            usage;;
+        *)
+            break;;
+    esac
+done
+if [ -z "$_piddir" ]; then
+    usage
+fi
+
+mkdir -p "$_piddir"
+mkfifo "${_piddir}/$$"
+trap 'rm -f "${_piddir}/$$"' EXIT
+cat /dev/null >"${_piddir}/$$"
+trap - EXIT
+rm -f "${_piddir}/$$"
+exec "$@"

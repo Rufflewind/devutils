@@ -1,0 +1,112 @@
+#!/bin/sh
+set -eu
+
+usage() {
+    cat >&2 <<EOF
+usage: `basename "$0"` [-s] [-n] <pid-fifo>... [--] [<gdb-arg>...]
+
+Run gdb on the first <pid-fifo> and unblock the FIFOs once the debugger has
+successfully attached.
+
+After the list of <pid-fifo>, an argument starting with a hyphen indicates the
+beginning of the GDB arguments.  A double hyphen can be used to explicitly
+separate the arguments.
+
+If -s is specified, the execution of the program is suspended upon attaching.
+Otherwise, as soon as gdb attaches the program will resume execution.
+
+If -n is specified, then all the PID FIFOs will be left blocked.
+
+To manually unblock the FIFOs, run:
+
+    cat <pid-fifo>...
+
+EOF
+    exit 1
+}
+
+
+continue=t
+unblock=t
+while [ $# -gt 0 ]; do
+    case $1 in
+        --)
+            cat >&2 <<EOF
+`basename "$0"`: expected PID FIFO argument
+
+EOF
+            usage
+            break;;
+        -n)
+            unblock=
+            shift;;
+        -s)
+            continue=
+            shift;;
+        -*)
+            cat >&2 <<EOF
+`basename "$0"`: unknown argument: $1
+
+EOF
+            usage;;
+        *)
+            break;;
+    esac
+done
+if [ $# -eq 0 ]; then
+    cat >&2 <<EOF
+`basename "$0"`: expected PID FIFO argument
+
+EOF
+    usage
+fi
+
+invalid_fifo() {
+    cat >&2 <<EOF
+`basename "$0"`: not a PID FIFO: $1
+
+EOF
+    exit 1
+}
+
+# validate PID FIFOs
+pid=
+for pidfifo
+do
+    case $pidfifo in
+        -*) break;;
+    esac
+    if [ ! -p "$pidfifo" ]; then
+        invalid_fifo "$pidfifo"
+    fi
+    curpid=`basename "$pidfifo"`
+    case $curpid in
+        ""|*[!0-9]*) invalid_fifo;;
+    esac
+    [ "$pid" ] || pid=$curpid
+done
+
+# combine PID FIFOs into a properly quoted shell string
+pidfifos=
+while [ $# -gt 0 ]; do
+    case $1 in
+        --)
+            shift
+            break;;
+        -*)
+            break;;
+    esac
+    patt="s/'/'\\\\''/g"
+    pidfifos=$pidfifos" '"`printf "%s" "$1" | sed "$patt"; printf "'"`
+    shift
+done
+
+if [ "$continue" ]; then
+    set -- -ex continue "$@"
+fi
+
+if [ "$unblock" ]; then
+    set -- -ex "shell cat$pidfifos >/dev/null" "$@"
+fi
+
+exec gdb -p "$pid" "$@"
