@@ -684,7 +684,8 @@ def emit_compile_args(language, args):
 
 def compile_source(filename, language=None, out_filename=None,
                    out_directory=None, libraries=[], detect_dependencies=True,
-                   directory=".", suffix=None, extra_deps=[], **kwargs):
+                   directory=".", suffix=None, extra_deps=[], no_mangle=False,
+                   **kwargs):
     '''Compile a source file into an object file.  The file can be given as a
     `str` or as another `Ruleset` that generates the source file, in which
     case `detect_dependencies` is automatically turned off.'''
@@ -712,7 +713,7 @@ def compile_source(filename, language=None, out_filename=None,
     simple_case = args_hash == DEFAULT_ARGS_HASH[language]
     simple_out_fn = snormpath(stem + ".o")
     if suffix is None:
-        suffix = "" if simple_case else "_" + args_hash
+        suffix = "" if simple_case or no_mangle else "_" + args_hash
     default_out_fn = snormpath("{0}{1}.o".format(stem, suffix))
     if out_filename is None:
         if out_directory is None:
