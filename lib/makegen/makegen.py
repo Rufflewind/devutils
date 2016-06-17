@@ -537,8 +537,6 @@ class Ruleset(object):
                 default_target = min(phonys)
             elif rules:
                 default_target = min(rules)
-        elif default_target not in rules:
-            raise ValueError("invalid default target: " + default_target)
         if cleans is None:
             cleans = frozenset(rules.keys()).difference(phonys)
         self.rules = rules
@@ -831,7 +829,7 @@ def separate_dependencies(dependencies):
     return fns, rulesets
 
 def plain_file(fn):
-    return RuleSet(default_target=fn)
+    return Ruleset(default_target=fn)
 
 def simple_command(command, out_filename, dependencies=[],
                    no_clean=False, phony=False):
