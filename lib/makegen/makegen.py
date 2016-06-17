@@ -2,9 +2,12 @@
 # Generic utilities
 # -----------------
 
+#@snip/do_nothing[
 def do_nothing(*args, **kwargs):
     pass
+#@]
 
+#@snip/update_dict[
 def update_dict(d0, *dicts, **kwargs):
     merger = kwargs.pop("merger", None)
     for k in kwargs:
@@ -24,7 +27,9 @@ def update_dict(d0, *dicts, **kwargs):
                     d0[k] = v
         else:
             d0.update(d)
+#@]
 
+#@snip/merge_dicts[
 def merge_dicts(*dicts, **kwargs):
     merger = kwargs.pop("merger", None)
     for k in kwargs:
@@ -32,12 +37,15 @@ def merge_dicts(*dicts, **kwargs):
     d0 = {}
     update_dict(d0, *dicts, merger=merger)
     return d0
+#@]
 
+#@snip/merge_sets[
 def merge_sets(*sets):
     s0 = set()
     for s in sets:
         s0.update(s)
     return s0
+#@]
 
 def freeze_value(value):
     '''Convert a value into an immutable form with a total ordering.'''
