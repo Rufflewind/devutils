@@ -1,3 +1,5 @@
+import os
+
 # ----------------------------------------------------------------------------
 # Generic utilities
 # -----------------
@@ -147,6 +149,28 @@ def simple_repr(value, name):
         "{0}={1}".format(k, repr(v))
         for k, v in sorted(value.__dict__.items())
     ))
+
+#@snip/WorkDir[
+#@requires: mod:os
+class WorkDir(object):
+    '''A context manager for changing to a different working directory.  The
+    original working directory is restored upon exiting the context.'''
+
+    def __init__(self, path):
+        '''Initialize a context for changing the working directory.'''
+        self.path = path
+
+    def __enter__(self):
+        '''Change the working directory and return the path to the previous
+        working directory.'''
+        self.prevdir = os.getcwd()
+        os.chdir(self.path)
+        return self.prevdir
+
+    def __exit__(self, type, value, traceback):
+        '''Restore the the temporary directory.'''
+        os.chdir(self.prevdir)
+#@]
 
 # ----------------------------------------------------------------------------
 # Hashing
@@ -355,9 +379,12 @@ def null_dependency_tool(filename):
 
 def run_external_dependency_tool(command, filename):
     import os, subprocess, tempfile
-    with open(os.devnull, "wb") as fnull, \
+    dn = os.path.dirname(filename)
+    with WorkDir(dn), \
+         open(os.devnull, "wb") as fnull, \
          tempfile.NamedTemporaryFile() as out_fn:
-        p = subprocess.Popen(command + [out_fn.name, filename],
+        bn = os.path.basename(filename)
+        p = subprocess.Popen(command + [out_fn.name, bn],
                              stdin=fnull,
                              stdout=subprocess.PIPE,
                              stderr=subprocess.STDOUT,
@@ -368,7 +395,8 @@ def run_external_dependency_tool(command, filename):
     if p.returncode or not out:
         raise ValueError("failed to run dependency tool for {0}:\n\n{1}"
                          .format(repr(filename), err))
-    return sorted(make_rule_header_parse(out))
+    return sorted(snormpath(os.path.join(dn, bn))
+                  for bn in make_rule_header_parse(out))
 
 def check_external_dependency_tool(command, extension):
     import os, subprocess, tempfile
