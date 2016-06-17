@@ -1,7 +1,11 @@
 #!/bin/sh
 set -eu
 if [ $# -lt 1 ]; then
-    set make.py
+    if [ -f make.py ]; then
+        set make.py
+    else
+        set Makefile.py
+    fi
 fi
 libdir=`dirname "$0"`/../lib/`basename "$0"`
 PYTHONPATH=$libdir${PYTHONPATH+:}${PYTHONPATH-} \
