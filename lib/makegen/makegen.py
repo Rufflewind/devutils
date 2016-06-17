@@ -834,7 +834,9 @@ def simple_command(command, out_filename, dependencies=[],
         "all": " ".join(map(shell_quote, dep_fns)),
         "all1": " ".join(map(shell_quote, dep_fns[1:])),
     }
-    commands = [command.format(*dep_fns, **kwargs)]
+    if isinstance(command, str):
+        command = command.split("\n")
+    commands = [cmd.format(*dep_fns, **kwargs) for cmd in command]
     commands = auto_mkdir(commands, out_filename, dep_fns=dep_fns)
     return Ruleset(
         rules={out_filename: (frozenset(dep_fns), commands)},
