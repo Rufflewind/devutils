@@ -822,6 +822,9 @@ def separate_dependencies(dependencies):
             raise TypeError("invalid dependency type: {0!r}".format(dep))
     return fns, rulesets
 
+def plain_file(fn):
+    return RuleSet(default_target=fn)
+
 def simple_command(command, out_filename, dependencies=[],
                    no_clean=False, phony=False):
     import os
