@@ -857,11 +857,11 @@ def separate_dependencies(dependencies):
             raise TypeError("invalid dependency type: {0!r}".format(dep))
     return fns, rulesets
 
-def plain_file(fn):
-    return Ruleset(default_target=fn)
+def plain_file(fn, **kwargs):
+    return Ruleset(default_target=fn, **kwargs)
 
 def simple_command(command, out_filename, dependencies=[],
-                   no_clean=False, phony=False):
+                   no_clean=False, phony=False, **ruleset_kwargs):
     import os
     dep_fns, deps = separate_dependencies(dependencies)
     kwargs = {
@@ -877,6 +877,7 @@ def simple_command(command, out_filename, dependencies=[],
         rules={out_filename: (frozenset(dep_fns), commands)},
         cleans=frozenset() if no_clean else None,
         phonys=[out_filename] if phony else [],
+        **ruleset_kwargs
     ).merge(*deps)
 
 def download(url, out_filename=None, out_directory=".",
