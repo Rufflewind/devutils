@@ -239,8 +239,10 @@ def make_rule_header_lex(string):
             escaping = False
             if not s:
                 if c == "\n":
-                    yield token[:-1]
-                    token = ""
+                    token = token[:-1]
+                    if token:
+                        yield token[:-1]
+                        token = ""
                 else:
                     token += c
                 continue
