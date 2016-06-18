@@ -865,7 +865,8 @@ def plain_file(fn, **kwargs):
     return Ruleset(default_target=fn, **kwargs)
 
 def simple_command(command, out_filename, dependencies=[],
-                   no_clean=False, phony=False, **ruleset_kwargs):
+                   no_clean=False, phony=False, no_format=False,
+                   **ruleset_kwargs):
     import os
     dep_fns, deps = separate_dependencies(dependencies)
     kwargs = {
@@ -875,7 +876,10 @@ def simple_command(command, out_filename, dependencies=[],
     }
     if isinstance(command, str):
         command = command.split("\n")
-    commands = [cmd.format(*dep_fns, **kwargs) for cmd in command]
+    if no_format:
+        commands = command
+    else:
+        commands = [cmd.format(*dep_fns, **kwargs) for cmd in command]
     commands = auto_mkdir(commands, out_filename, dep_fns=dep_fns)
     return Ruleset(
         rules={out_filename: (frozenset(dep_fns), commands)},
