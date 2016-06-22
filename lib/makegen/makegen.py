@@ -1,4 +1,11 @@
-import os
+import logging, os
+
+_logger = logging.getLogger(__name__)
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter(
+    "[%(levelname)s] %(message)s"
+))
+_logger.addHandler(_handler)
 
 # ----------------------------------------------------------------------------
 # Generic utilities
@@ -397,8 +404,17 @@ def run_external_dependency_tool(command, filename):
     if p.returncode or not out:
         raise ValueError("failed to run dependency tool for {0}:\n\n{1}"
                          .format(repr(filename), err))
-    return sorted(snormpath(os.path.join(dn, bn))
-                  for bn in make_rule_header_parse(out))
+    dep_fns = sorted(snormpath(os.path.join(dn, bn))
+                     for bn in make_rule_header_parse(out))
+    # warn about missing dependencies because these dependencies themselves
+    # may also contain dependencies that we don't know; to fix this, it is
+    # recommended to run `make` to generate the missing files, and then run
+    # `makegen` again.
+    for dep_fn in dep_fns:
+        if not os.path.exists(dep_fn):
+            _logger.warning("missing dependency: {0}"
+                            .format(dep_fn))
+    return dep_fns
 
 def check_external_dependency_tool(command, extension):
     import os, subprocess, tempfile
