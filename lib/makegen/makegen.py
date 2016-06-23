@@ -428,6 +428,33 @@ def check_external_dependency_tool(command, extension):
             stderr=fnull,
         ).wait() == 0
 
+def get_cpp_dependencies(filename):
+    '''Recursively finds all `#include` dependencies of a CPP file.
+    External includes (i.e. with `< >` brackets) are ignored.  The
+    dependencies are returned as a `set`.  (The given file is considered
+    to be a dependency of itself and thus included in the results.)
+    '''
+    import os, re
+    regex = r'\s*#\s*include\s*"([^"]+)"'
+    queue = [filename]
+    deps = set(queue)
+    while queue:
+        path = queue.pop()
+        dn = os.path.dirname(path)
+        try:
+            with open(path) as f:
+                for line in f:
+                    m = re.match(regex, line)
+                    if m:
+                        path = snormpath(os.path.join(dn, m.group(1)))
+                        if path not in deps:
+                            deps.add(path)
+                            queue.append(path)
+        except IOError as e:
+            _logger.warn("cannot detect dependencies of {0} ({1})"
+                         .format(path, e))
+    return deps
+
 def guess_default_dependency_tool(language):
     import os
     if language == "c":
@@ -474,8 +501,8 @@ def get_dependency_tool(language):
 '''A dict of dependency tools keyed by language.  This variable may be tweaked
 as necessary.'''
 DEPENDENCY_TOOLS = {
-    "c": None,
-    "c++": None,
+    "c": get_cpp_dependencies,
+    "c++": get_cpp_dependencies,
 }
 
 # ----------------------------------------------------------------------------
