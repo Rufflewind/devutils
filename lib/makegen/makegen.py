@@ -428,28 +428,31 @@ def check_external_dependency_tool(command, extension):
             stderr=fnull,
         ).wait() == 0
 
+def get_cpp_includes(filename):
+    import os, re
+    regex = r'\s*#\s*include\s*"([^"]+)"'
+    dn = os.path.dirname(filename)
+    with open(filename) as f:
+        for line in f:
+            m = re.match(regex, line)
+            if m:
+                yield snormpath(os.path.join(dn, m.group(1)))
+
 def get_cpp_dependencies(filename):
     '''Recursively finds all `#include` dependencies of a CPP file.
     External includes (i.e. with `< >` brackets) are ignored.  The
     dependencies are returned as a `set`.  (The given file is considered
     to be a dependency of itself and thus included in the results.)
     '''
-    import os, re
-    regex = r'\s*#\s*include\s*"([^"]+)"'
     queue = [filename]
     deps = set(queue)
     while queue:
         path = queue.pop()
-        dn = os.path.dirname(path)
         try:
-            with open(path) as f:
-                for line in f:
-                    m = re.match(regex, line)
-                    if m:
-                        path = snormpath(os.path.join(dn, m.group(1)))
-                        if path not in deps:
-                            deps.add(path)
-                            queue.append(path)
+            for new_fn in get_cpp_includes(path):
+                if not new_fn in deps:
+                    deps.add(new_fn)
+                    queue.append(new_fn)
         except IOError as e:
             _logger.warn("cannot detect dependencies of {0} ({1})"
                          .format(path, e))
