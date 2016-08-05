@@ -1,11 +1,6 @@
 import logging, os
 
 _logger = logging.getLogger(__name__)
-_handler = logging.StreamHandler()
-_handler.setFormatter(logging.Formatter(
-    "[%(levelname)s] %(message)s"
-))
-_logger.addHandler(_handler)
 
 # ----------------------------------------------------------------------------
 # Generic utilities
@@ -432,11 +427,16 @@ def get_cpp_includes(filename):
     import os, re
     regex = r'\s*#\s*include\s*"([^"]+)"'
     dn = os.path.dirname(filename)
-    with open(filename) as f:
-        for line in f:
-            m = re.match(regex, line)
-            if m:
-                yield snormpath(os.path.join(dn, m.group(1)))
+    includes = []
+    try:
+        with open(filename) as f:
+            for line in f:
+                m = re.match(regex, line)
+                if m:
+                    includes.append(snormpath(os.path.join(dn, m.group(1))))
+    except IOError as e:
+        _logger.warning("cannot parse includes of {0} ({1})".format(filename, e))
+    return includes
 
 def get_cpp_dependencies(filename):
     '''Recursively finds all `#include` dependencies of a CPP file.
@@ -448,14 +448,10 @@ def get_cpp_dependencies(filename):
     deps = set(queue)
     while queue:
         path = queue.pop()
-        try:
-            for new_fn in get_cpp_includes(path):
-                if not new_fn in deps:
-                    deps.add(new_fn)
-                    queue.append(new_fn)
-        except IOError as e:
-            _logger.warn("cannot detect dependencies of {0} ({1})"
-                         .format(path, e))
+        for new_fn in get_cpp_includes(path):
+            if not new_fn in deps:
+                deps.add(new_fn)
+                queue.append(new_fn)
     return deps
 
 def guess_default_dependency_tool(language):
@@ -751,10 +747,10 @@ def compile_source(filename, language=None, out_filename=None,
             try:
                 prereqs.extend(get_dependency_tool(language)(filename))
             except Exception as e:
-                logging.warn(e)
+                logging.warning(e)
         else:
-            logging.warn("cannot detect dependencies (file does not exist) "
-                         "for: {0}".format(filename))
+            logging.warning("cannot detect dependencies (file does not exist) "
+                            "for: {0}".format(filename))
     prereqs.append(filename)
     compile_args = emit_compile_args(language, args)
     args_hash = hash_str(compile_args)
@@ -1004,3 +1000,10 @@ class RelocatedBuilder(object):
             *args,
             **kwargs
         )
+
+def init_logger(logger=logging.getLogger()):
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter(
+        "[%(levelname)s] %(message)s"
+    ))
+    logger.addHandler(handler)
