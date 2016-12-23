@@ -1,4 +1,4 @@
-import logging, os
+import logging, re, os
 
 _logger = logging.getLogger(__name__)
 
@@ -194,8 +194,31 @@ def hash_json(data, length=DEFAULT_HASH_LENGTH):
 # Syntactic manipulation
 # ----------------------
 
+#@shell_quote[
+#@requires: mod:re
+def shell_quote(string):
+    # we try to be conservative here because some shells have more special
+    # characters than others (`!` and `^` are not safe); we require empty
+    # strings to be quoted
+    if re.match("[]0-9A-Za-z/@:.,_+-]+$", string):
+        return string
+    return "'{0}'".format(string.replace("'", "'\\''"))
+#@]
+
+#@shell_quote_arg[
+#@requires: mod:re shell_quote
+def shell_quote_arg(string):
+    # allow `=` since it's safe as an argument
+    if re.match("[]0-9A-Za-z/@:.,_=+-]+$", string):
+        return string
+    return shell_quote(string)
+#@]
+
+#@snormpath[
+#@requires: mod:re
 def snormpath(path):
-    import re
+    '''Like 'normpath', but does not expand '..' to avoid altering the
+    meaning of a path (e.g. due to '..' inside a symlinked directory).'''
     sep = "/"
     m = re.match(re.escape(sep) + "*", path)
     num_leading_slashes = len(m.group(0))
@@ -204,22 +227,7 @@ def snormpath(path):
     return (sep * num_leading_slashes +
             sep.join(s for s in path.split(sep)
                      if not re.match(r"\.?$", s))) or "."
-
-def shell_quote(string):
-    import re
-    # we try to be conservative here because some shells have more special
-    # characters than others (`!` and `^` are not safe); we require empty
-    # strings to be quoted
-    if re.match("[]a-zA-Z0-9/@:.,_+-]+$", string):
-        return string
-    return "'{0}'".format(string.replace("'", "'\\''"))
-
-def shell_quote_arg(string):
-    import re
-    # allow `=` since it's safe as an argument
-    if re.match("[]a-zA-Z0-9/@:.,_=+-]+$", string):
-        return string
-    return shell_quote(string)
+#@]
 
 def make_escape(string):
     return string.replace("$", "$$")
