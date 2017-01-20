@@ -1,4 +1,6 @@
 import logging, re, os
+#@imports[
+#@]
 
 _logger = logging.getLogger(__name__)
 
@@ -6,12 +8,13 @@ _logger = logging.getLogger(__name__)
 # Generic utilities
 # -----------------
 
-#@snip/do_nothing[
+#@snips[
+#@do_nothing[
 def do_nothing(*args, **kwargs):
     pass
 #@]
 
-#@snip/update_dict[
+#@update_dict[
 def update_dict(d0, *dicts, **kwargs):
     merger = kwargs.pop("merger", None)
     for k in kwargs:
@@ -33,7 +36,8 @@ def update_dict(d0, *dicts, **kwargs):
             d0.update(d)
 #@]
 
-#@snip/merge_dicts[
+#@merge_dicts[
+#@requires: update_dict
 def merge_dicts(*dicts, **kwargs):
     merger = kwargs.pop("merger", None)
     for k in kwargs:
@@ -43,13 +47,25 @@ def merge_dicts(*dicts, **kwargs):
     return d0
 #@]
 
-#@snip/merge_sets[
+#@merge_sets[
 def merge_sets(*sets):
     s0 = set()
     for s in sets:
         s0.update(s)
     return s0
 #@]
+
+#@exclusive_merge[
+def exclusive_merge(arg0, *args):
+    '''Return one of the arguments if all of them are equal.  Fails with
+    `ValueError` otherwise.'''
+    for arg in args:
+        if arg0 != arg:
+            raise ValueError("conflicting values: {0!r} vs {1!r}"
+                             .format(arg0, arg))
+    return arg0
+#@]
+#@] end snips
 
 def freeze_value(value):
     '''Convert a value into an immutable form with a total ordering.'''
@@ -60,15 +76,6 @@ def freeze_value(value):
     elif isinstance(value, set) or isinstance(value, frozenset):
         return tuple(sorted(value))
     return value
-
-def exclusive_merge(arg0, *args):
-    '''Return one of the arguments if all of them are equal.  Fails with
-    `ValueError` otherwise.'''
-    for arg in args:
-        if arg0 != arg:
-            raise ValueError("conflicting values: {0} vs {1}"
-                             .format(repr(arg0), repr(arg)))
-    return arg0
 
 def merge_frozen_dicts(*dicts):
     '''Merge several dictionaries with the values frozen.  Fails with
