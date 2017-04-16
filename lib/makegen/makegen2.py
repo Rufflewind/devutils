@@ -2,8 +2,8 @@ import functools, itertools, logging, os, re, subprocess, tempfile, traceback
 
 logger = logging.getLogger(__name__)
 
-class MakeError(Exception):
-    pass
+def _format_stack(stack):
+    return "".join(traceback.format_list(stack))
 
 class Symbol(object):
     def __init__(self, name):
@@ -12,9 +12,33 @@ class Symbol(object):
     def __repr__(self):
         return self.name
 
+class Meta(object):
+    '''An object provides equality over the first value, ignoring the second.'''
+    def __init__(self, value, meta):
+        self.value = value
+        self.meta = meta
+
+    def __repr__(self):
+        return "Meta{!r}".format((self.value, self.meta))
+
+    def __eq__(self, other):
+        return self.value == other.value
+
+class UnionConflictError(ValueError):
+    def __init__(self, key, value1, value2, *args):
+        self.key = key
+        self.value1 = value1
+        self.value2 = value2
+        message = ("conflicting values for {!r}: {!r} != {!r}"
+                   .format(key, value1, value2))
+        super(UnionConflictError, self).__init__(message, *args)
+
 class UnionDict(object):
-    def __init__(self, d=()):
-        self.inner = dict(d)
+    '''A wrapper over a dictionary where |= is overloaded to perform merges.
+    The merge fails if there are keys with differing values.'''
+
+    def __init__(self, inner=()):
+        self.inner = dict(inner)
 
     def __repr__(self):
         return "UnionDict({!r})".format(self.inner)
@@ -27,32 +51,44 @@ class UnionDict(object):
                 pass
             else:
                 if self_v != v:
-                    raise ValueError("conflicting values for {!r}: {!r} != {!r}"
-                                     .format(k, self_v, v))
+                    raise UnionConflictError(k, self_v, v)
                 continue
             self.inner[k] = v
         return self
 
-class Identity(object):
-    def __init__(self, value):
-        self.value = value
-
-    def __repr__(self):
-        return "Identity({!r})".format(self.value)
-
-    def __hash__(self):
-        __hash__ = getattr(self.value, "__hash__", None)
-        if __hash__ is not None:
-            return __hash__()
-        return hash(id(self.value))
-
-    def __eq__(self, other):
-        __hash__ = getattr(self.value, "__hash__", None)
-        if __hash__ is not None:
-            return self.value == other
-        return id(self.value) == id(other.value)
-
 class Make(object):
+    '''A `Make` object represents either:
+
+      - a rule: a single rule along with a collection of its dependencies; or
+      - a ruleset: an anonymous collection of rules (dependencies).
+
+    A rule contains a name, dependencies, commands, and attributes.
+
+      - A name is a string.  It is the target of the makefile rule.
+      - Dependencies are an ordered sequence of `Make` objects.  A dependency
+        is included in the prerequisites of the makefile rule if and only if
+        it is a rule, not a ruleset.
+      - Commands are an ordered sequences of strings.  In the makefile, each
+        string is translated to a single line preceded by a tab.
+      - Attributes are lists of pairs of the form (key, value).  The key is a
+        unique identifier for this particular attribute type.  The value is an
+        arbitrary object that forms a semilattice using the `|=` operator.
+
+    Ruleset contain only dependencies and attributes, just like rules.  Their
+    names are always `None` and their commands must be an empty sequence.
+
+    A useful trick is to anonymize a rule by wrapping it: `Make(None, rule)`.
+    This allows them to be attached as a dependency without being included
+    as an explicit prerequisite.  This is done automatically by
+    `InferenceRule.make()`, for example.
+
+    A `Make` object may be created with a lazily-populated sequence of
+    dependencies.  This means passing a function rather than a list to the
+    `deps` argument of the constructor.  When `populate_deps(cache)` is
+    called, the function will be called with the `cache` argument, where
+    `cache` should be a `dict`-like object.  Until `populate_deps` is called,
+    the `.deps` attribute will raise an exception.
+    '''
 
     @staticmethod
     def ensure(make):
@@ -64,47 +100,71 @@ class Make(object):
             raise TypeError("an object of {!r} cannot be converted to Make"
                             .format(type(make)))
 
-    def __init__(self, name, raw_deps=(), cmds=(), *attrs):
-        '''The 'raw_deps' argument can be either [deps] or (cache) -> deps.
-        In the latter case the '.deps' field will remain unavailable until
-        '.populate_deps()' is called.
-
-        'attrs' can contain either (attr_key, value), (name) -> (attr_key,
-        value), or (attr_key, None).  The last one prevents attributes of
-        dependencies from propagating upward.'''
+    @staticmethod
+    def _check_args(name, cmds, attrs):
         if name is None and cmds:
             raise TypeError("if name is None, cmds must be None too: {!r}"
                             .format(cmds))
         if not (isinstance(cmds, tuple) or isinstance(cmds, list)):
-            raise TypeError("cmds must either list or tuple: {!r}"
-                            .format(cmds))
+            raise TypeError("cmds must either list or tuple: {!r}".format(cmds))
         for cmd in cmds:
             if not isinstance(cmd, str):
-                raise TypeError("cmds must be a list of str: {!r}"
-                                .format(cmds))
-        if not callable(raw_deps):
-            raw_deps = [Make.ensure(dep) for dep in raw_deps]
+                raise TypeError("cmds must be a list of str: {!r}".format(cmds))
+        try:
+            valid_attrs = all(callable(attr) or
+                              (isinstance(attr, tuple) and
+                               len(attr) == 2)
+                              for attr in attrs)
+        except TypeError:
+            valid_attrs = False
+        if not valid_attrs:
+            raise TypeError("attrs must be a list of callables and/or "
+                            "pairs: {!r}".format(attrs))
+
+    def __init__(self, name=None, deps=(), cmds=(), attrs=(), _stack=None):
+        '''The 'deps' argument can be either `deps` or a function `(cache) ->
+        deps`.  In the latter case the '.deps' field will remain unavailable
+        until '.populate_deps()' is called.
+
+        The string dependencies are automatically promoted to `Make` objects
+        using `Make.ensure`.
+
+        'attrs' can contain be either `(key, value)` pairs, or functions of
+        the form `(name) -> (attr_key, value)`.'''
+        self._check_args(name, cmds, attrs)
+        if not callable(deps):
+            deps = [Make.ensure(dep) for dep in deps]
         self.name = name
-        self.raw_deps = raw_deps
+        self.raw_deps = deps
         self.cmds = cmds
         self.attrs = {}
         self.update_attrs(*attrs)
-        self._stack = traceback.extract_stack()[:-1]
+        self._stack = _stack or traceback.extract_stack()[:-1]
 
     def __repr__(self):
-        deps = "<unpopulated>" if callable(self.raw_deps) else "<populated>"
+        deps = ("<unpopulated>" if callable(self.raw_deps) else
+                "[{}]".format(", ".join("<Make for {!r} at {}>"
+                                        .format(dep.name, hex(id(dep)))
+                                        for dep in self.deps)))
         tup = (self.name, Symbol(deps), self.cmds) + tuple(
             ((Symbol(k.__name__) if callable(k) else k), v)
             for k, v in self.attrs.items())
         return "Make{!r}".format(tup)
 
+    def __ior__(self, other):
+        self.deps.append(Make(deps=(other,)))
+        return self
+
     def with_attrs(self, *attrs):
+        '''Make a copy with the given attributes added.'''
         copy = Make(self.name, self.raw_deps, self.cmds)
         copy.attrs = dict(self.attrs)
+        copy._stack = self._stack
         copy.update_attrs(*attrs)
         return copy
 
     def update_attrs(self, *attrs):
+        '''Add the given attributes.'''
         attrs = list(attrs)
         for i, attr in enumerate(attrs):
             if not attr:
@@ -117,42 +177,47 @@ class Make(object):
         self.attrs.update(attrs)
 
     @property
-    def macros(self):
-        try:
-            return self.attrs[MACROS]
-        except KeyError:
-            pass
-        macros = {}
-        self.attrs[MACROS] = macros
-        return macros
-
-    @property
     def is_trivial(self):
-        return not self.deps and not self.cmds and (
-            not self.attrs or (len(self.attrs) == 1 and
-                               AUXILIARY in self.attrs))
+        '''
+        Return whether the `Make` object needs to be rendered.
+
+        Raises an error if the list of dependencies has not yet been populated.
+        '''
+        return self.name is None or not (self.deps or self.cmds or self.attrs)
 
     @property
     def deps(self):
+        '''Obtain the dependencies of the rule.  This will raise an error if
+        the dependencies have not yet been populated.'''
         raw_deps = self.raw_deps
         if callable(raw_deps):
             raise ValueError("dependencies haven't been populated yet")
         return raw_deps
 
     def populate_deps(self, cache):
+        '''Populate the dependencies of the current node.
+
+        This has no effect if the dependencies are already populated.'''
         raw_deps = self.raw_deps
         if callable(raw_deps):
             deps = raw_deps(cache)
             self.raw_deps = [Make.ensure(dep) for dep in deps]
 
     def append(self, dep):
+        '''
+        Append `dep` to the list of dependencies and return `dep`.
+
+        Raises an error if the list of dependencies has not yet been populated.
+        '''
         self.deps.append(dep)
         return dep
 
-    def traverse(self):
+    def walk(self):
         '''Traverse first through self and then through all its unique
-        transitive dependencies in an unspecified order.  Send a true-ish
-        value to skip the dependencies of a particular node.'''
+        transitive dependencies in depth-first order.  Send a true-ish
+        value to skip the dependencies of a particular node.
+
+        Requires a tree with fully populated dependencies.'''
         seen = set()
         candidates = [self]
         while candidates:
@@ -164,52 +229,69 @@ class Make(object):
             skip_deps = yield candidate
             if not skip_deps:
                 candidates.extend(reversed(candidate.deps))
-            candidates.extend(candidate.attrs.get(AUXILIARY, ()))
 
     def merged_attr(self, attr_key, accum):
         '''Attributes are expected to form a semilattice with respect to the
-        |= operator.'''
-        traversal = self.traverse()
-        for m in traversal:
-            while True:
-                try:
-                    attr = m.attrs[attr_key]
-                except KeyError:
-                    break
-                if attr is None:
-                    try:
-                        m = traversal.send(True)
-                    except StopIteration:
-                        return
-                    continue
-                accum |= attr
-                break
+        |= operator.
+
+        Requires a tree with fully populated dependencies.'''
+        for m in self.walk():
+            try:
+                attr = m.attrs[attr_key]
+            except KeyError:
+                continue
+            accum |= attr
         return accum
 
     def default_target(self):
-        t = self.name
-        if t is not None:
-            return t
-        for dep in self.deps:
-            t = dep.default_target()
+        '''
+        Find the name of the first rule within the transitive closure.
+        Returns `None` if there are no rules.
+
+        Requires a tree with fully populated dependencies.'''
+        for m in self.walk():
+            t = self.name
             if t is not None:
                 return t
         return None
 
+    def gather_macros(self):
+        '''Requires a tree with fully populated dependencies.'''
+        try:
+            macros = self.merged_attr(MACROS, UnionDict()).inner
+            err = None
+        except UnionConflictError as e:
+            err = e
+        if err:
+            raise ValueError("conflicting attributes for {!r}:\n  "
+                             "{!r}\n  {!r}\n\n"
+                             "The former attribute comes from:\n{}\n"
+                             "The latter attribute comes from:\n{}"
+                             .format(err.key,
+                                     err.value1.value,
+                                     err.value2.value,
+                                     _format_stack(err.value1.meta),
+                                     _format_stack(err.value2.meta))
+                             .rstrip())
+        return dict((k, v.value) for k, v in macros.items())
+
     def gather_suffixes(self):
+        '''Requires a tree with fully populated dependencies.'''
         suffixes = sorted(self.merged_attr(SUFFIXES, set()))
         return Make(".SUFFIXES", suffixes) if suffixes else MakeSet()
 
     def gather_phony(self):
+        '''Requires a tree with fully populated dependencies.'''
         phonys = sorted(self.merged_attr(PHONY, set()))
         return Make(".PHONY", phonys) if phonys else MakeSet()
 
     def gather_clean(self, exclusions):
+        '''Requires a tree with fully populated dependencies.'''
         clean_cmds = self.merged_attr(CLEAN_CMDS, set())
         cleans = self.merged_attr(CLEAN, set())
         cleans.difference_update(exclusions)
         if cleans:
-            clean_cmds.add("rm -fr " + " ".join(cleans))
+            clean_cmds.add("rm -fr " + " ".join(sorted(cleans)))
         return (Make("clean", (), sorted(clean_cmds))
                 if clean_cmds else MakeSet())
 
@@ -220,57 +302,97 @@ class Make(object):
         return "".join((
             self.name,
             ":",
-            "".join(" " + dep.name for dep in self.deps),
+            "".join(" " + dep.name
+                    for dep in self.deps
+                    if dep.name is not None),
             "\n",
             "".join("\t{}\n".format(cmd) for cmd in self.cmds),
         ))
 
-    def render(self, f):
+    def render(self, f, out_name="Makefile"):
         # make sure modifications are localized
         self = self.with_attrs()
         self.raw_deps = list(self.deps)
 
         cache = {}
-        for make in self.traverse():
+        for make in self.walk():
             make.populate_deps(cache)
 
-        macros = self.merged_attr(MACROS, UnionDict()).inner
+        default_target = self.default_target()
+        macros = self.gather_macros()
         suffixes = self.gather_suffixes()
         phony = self.gather_phony()
-        clean = self.gather_clean(dep.name for dep in phony.deps)
+        phony_names = set(dep.name for dep in phony.deps)
+        assert None not in phony_names
+        clean = self.gather_clean(phony_names)
         extras = (suffixes, phony, clean)
 
-        rules = {}
-        default_target = self.default_target()
-        for make in itertools.chain(itertools.islice(self.traverse(), 1, None),
-                                    extras):
-            # skip trivial rules to avoid unnecessary bloat + conflicts
+        seen = {}
+        # categorize rules so we can re-order them later
+        first_rule = []
+        phony_rules = []
+        normal_rules = []
+        self_rule = []
+        inference_rules = []
+        special_rules = []
+        special_phony_rule = []
+        for make in itertools.chain(self.walk(), extras):
+            # skip trivial rules to avoid unnecessary bloat and conflicts
             if make.is_trivial:
                 continue
+
             name = make.name
-            rule = (make.render_rule(), make)
-            old_rule = rules.get(name)
-            if old_rule is not None and old_rule[0] != rule[0]:
-                old_stack = "".join(traceback.format_list(old_rule[1]._stack))
-                stack = "".join(traceback.format_list(rule[1]._stack))
-                raise MakeError("conflicting rules:\n  {!r}\n  {!r}\n\n"
-                                "Origin of first rule:\n{}\n"
-                                "Origin of second rule:\n{}"
-                                .format(old_rule[1], rule[1], old_stack, stack))
-            rules[name] = rule
-        first_rule = (() if default_target is None
-                      else (rules.pop(default_target),))
+            rendered = make.render_rule()
+            old_rule = seen.get(name)
+
+            # check for conflicting rules
+            if old_rule is not None and old_rule[0] != rendered:
+                old_make = old_rule[1]
+                raise ValueError("conflicting rules:\n  {!r}\n  {!r}\n\n"
+                                 "The former rule comes from:\n{}\n"
+                                 "The latter rule comes from:\n{}"
+                                 .format(old_make, make,
+                                         _format_stack(old_make._stack),
+                                         _format_stack(make._stack))
+                                 .rstrip())
+
+            seen[name] = (rendered, make)
+            if name == default_target:
+                first_rule.append(rendered)
+            elif name == out_name:
+                self_rule.append(rendered)
+            elif re.match("\.[^.]+(\.[^.]+)", name) and not make.deps:
+                inference_rules.append(rendered)
+            elif name == ".PHONY":
+                special_phony_rule.append(rendered)
+            elif re.match("\.[A-Z]", name) or name == out_name:
+                special_rules.append(rendered)
+            elif name in phony_names:
+                phony_rules.append(rendered)
+            else:
+                normal_rules.append(rendered)
+        phony_rules.sort()
+        inference_rules.sort()
+        special_rules.sort()
+        normal_rules.sort()
+        rules = itertools.chain(first_rule,
+                                phony_rules,
+                                normal_rules,
+                                self_rule,
+                                inference_rules,
+                                special_rules,
+                                special_phony_rule)
 
         for k, v in macros.items():
             f.write("{}={}\n".format(k, v))
-        if macros:
-            f.write("\n")
+        for i, rule in enumerate(rules):
+            if i != 0 or macros:
+                f.write("\n")
+            f.write(rule)
 
-        for rule, _ in itertools.chain(first_rule, sorted(rules.values())):
-            f.write(rule + "\n")
-
-def make(name, deps=(), cmds=(), *attrs, clean=True, mkdir=True):
-    m = Make(name, deps, cmds, *attrs)
+def make(name, deps=(), cmds=(), attrs=(), clean=True, mkdir=True, _stack=None):
+    stack = _stack or traceback.extract_stack()[:-1]
+    m = Make(name, deps, cmds, attrs, _stack=stack)
     if CLEAN not in m.attrs and not m.attrs.get(PHONY):
         if clean:
             m.update_attrs(CLEAN)
@@ -279,16 +401,15 @@ def make(name, deps=(), cmds=(), *attrs, clean=True, mkdir=True):
     return m
 
 def MACROS(macros=()):
-    assert not isinstance(macros, str)
-    return MACROS, macros
+    try:
+        macros = dict(macros)
+    except TypeError as e:
+        raise TypeError("'macros' should be a dict-like object")
+    stack = traceback.extract_stack()[:-1]
+    return MACROS, dict((k, Meta(v, stack)) for k, v in macros.items())
 
 def SUFFIXES(suffixes):
     return SUFFIXES, set(suffixes)
-
-def AUXILIARY(rules):
-    if isinstance(rules, str):
-        raise TypeError("expected an iterable of of Make")
-    return AUXILIARY, set(rules)
 
 def PHONY(name):
     return PHONY, set((name,))
@@ -369,8 +490,8 @@ def run_dep_tool(dep_tool, path, cache=None):
             err, _ = p.communicate()
             out = f.read()
         if p.returncode or not out:
-            raise MakeError("failed to run dependency tool for {0}:\n\n{1}"
-                            .format(repr(path), err))
+            raise RuntimeError("failed to run dependency tool for {0}:\n\n{1}"
+                               .format(repr(path), err))
         # warn about missing dependencies because these dependencies
         # themselves may also contain dependencies that we don't know; to fix
         # this, it is recommended to run `make` to generate the missing files,
@@ -400,10 +521,10 @@ class InferenceRule(object):
         suffixes = [self.src_ext]
         if self.tar_ext:
             suffixes.append(self.tar_ext)
-        return Make(self.src_ext + self.tar_ext,
-                    [],
-                    (("mkdir -p $(@D)",) if mkdir else ()) + tuple(self.cmds),
-                    SUFFIXES(suffixes))
+        cmds = (("mkdir -p $(@D)",) if mkdir else ()) + tuple(self.cmds)
+        return Make(deps=(Make(self.src_ext + self.tar_ext,
+                               cmds=cmds,
+                               attrs=(SUFFIXES(suffixes),)),))
 
 C_INFERENCE_RULE = InferenceRule(".c", ".o",
                                  ("$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $<",))
@@ -412,19 +533,17 @@ def make_c_obj(path, via=C_INFERENCE_RULE):
     ''''via' can either be an InferenceRule or (name, cmds)'''
     if isinstance(path, Make):
         return path
-    if not path.endswith(".c"):
-        raise ValueError("expected source file (*.c), got: {!r}"
-                         .format(path))
+    base_deps_func = functools.partial(C_DEPS_FUNC, path)
     if isinstance(via, InferenceRule):
         stem, _ = os.path.splitext(path)
         name = stem + via.tar_ext
         cmds = ()
-        attrs = (AUXILIARY((via.make(),)),)
+        deps_func = lambda cache: itertools.chain(base_deps_func(cache),
+                                                  (via.make(),))
     else:
         name, cmds = via
-        attrs = ()
-    return make(name, functools.partial(C_DEPS_FUNC, path), cmds, *attrs,
-                mkdir=False)
+        deps_func = base_deps_func
+    return make(name, deps_func, cmds, mkdir=False)
 
 def make_bin(name,
              deps,
@@ -435,7 +554,6 @@ def make_bin(name,
         raise TypeError("'deps' argument must be a list, not str")
     deps = tuple(tuple(dep if isinstance(dep, Make) else make_obj(dep)
                        for dep in deps))
-    dep_names = " ".join(dep.name for dep in deps)
-    return make(name,
-                deps,
-                ("{ld} -o $@ {dep_names} {libs}\n".format(**locals()),))
+    dep_names = " ".join(dep.name for dep in deps if dep.name is not None)
+    cmds = ("{ld} -o $@ {dep_names} {libs}".format(**locals()),)
+    return make(name, deps, cmds)
