@@ -10,7 +10,7 @@ import re, subprocess, sys
 
 def call_encode(digest):
     p = subprocess.Popen(
-        ("encode", "-f", "hex", "-l", "-s") + tuple(sys.argv[1:]),
+        ("encode", "-f", "hex", "-l", "-s", "-w", "0") + tuple(sys.argv[1:]),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
     )
