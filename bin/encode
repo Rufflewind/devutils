@@ -395,7 +395,8 @@ ENCODINGS = (
 try:
     maketrans = str.maketrans
 except AttributeError:
-    from string import maketrans
+    def maketrans(x, y):
+        return dict((ord(cx), cy) for cx, cy in zip(x, y))
 try:
     stdin = sys.stdin.buffer
 except AttributeError:
